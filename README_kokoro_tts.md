@@ -86,7 +86,7 @@ roscore
 ./launch_kokoro_tts.sh
 ```
 ```bash
-rostopic pub /kokoro_tts/text_input std_msgs/String "data: '你好，这是测试文本'"
+rostopic pub /kokoro_tts/text_input std_msgs/String "data: '大家好！我是小飒，很高兴能在这里和大家见面。我是上海飒智智能科技有限公司大家庭里的最新成员，一款集成了尖端人工智能和精密仿生技术的人形机器人。大家可以把我当成一个既聪明又能干的新朋友。'"
 ```
 
 #### 监听状态和音频文件
