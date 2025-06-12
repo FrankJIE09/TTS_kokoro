@@ -1,8 +1,8 @@
-ipython==8.12.3
-kokoro==0.9.4
-soundfile==0.13.1
-# torch==2.8.0.dev20250426+cu128
+ipython
+kokoro
+soundfile
 pypinyin
 cn2an
 ordered_set
 jieba
+torch
