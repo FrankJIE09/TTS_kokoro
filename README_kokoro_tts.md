@@ -5,9 +5,11 @@
 ## 文件说明
 
 - `TextToSpeech.srv` - ROS 服务消息定义文件
-- `kokoro_tts_service.py` - TTS 服务端程序
-- `kokoro_tts_client.py` - TTS 客户端测试程序
+- `kokoro_tts_service.py` - TTS 服务端程序（保存音频到 ./audio 目录）
+- `kokoro_tts_client.py` - TTS 客户端程序（自动播放生成的音频）
 - `launch_kokoro_tts.sh` - 服务启动脚本
+- `test_audio_playback.py` - 音频播放功能测试脚本
+- `install_audio_deps.sh` - 音频播放依赖安装脚本
 - `generate_audio_kokoro.py` - 原始的批量音频生成程序
 
 ## 依赖要求
@@ -17,12 +19,20 @@
 pip install kokoro
 pip install soundfile
 pip install numpy
-pip install torch  # 可选，kokoro 可能需要
+pip install pygame  # 用于音频播放
+pip install torch   # 可选，kokoro 可能需要
 ```
 
 ### 系统依赖 (Ubuntu/Debian)
 ```bash
 sudo apt install espeak-ng
+sudo apt install alsa-utils      # ALSA 音频播放工具
+sudo apt install pulseaudio-utils # PulseAudio 音频播放工具
+```
+
+### 快速安装音频播放依赖
+```bash
+./install_audio_deps.sh  # 自动安装所有音频播放依赖
 ```
 
 ### ROS 依赖
@@ -45,22 +55,28 @@ conda activate kokoro
 python3 kokoro_tts_service.py
 ```
 
-### 3. 使用客户端测试
+### 3. 测试音频播放功能（推荐）
+```bash
+conda activate kokoro
+python3 test_audio_playback.py
+```
 
-#### 交互模式
+### 4. 使用客户端测试
+
+#### 交互模式（自动播放音频）
 ```bash
 conda activate kokoro
 python3 kokoro_tts_client.py
 ```
-然后在提示符下输入中文文本。
+然后在提示符下输入中文文本，生成的音频会自动播放。
 
-#### 命令行模式
+#### 命令行模式（自动播放音频）
 ```bash
 conda activate kokoro
 python3 kokoro_tts_client.py "你好世界"
 ```
 
-### 4. 使用 ROS 话题直接发送
+### 5. 使用 ROS 话题直接发送
 
 #### 发送文本
 ```bash
@@ -73,9 +89,13 @@ roscore
 rostopic pub /kokoro_tts/text_input std_msgs/String "data: '你好，这是测试文本'"
 ```
 
-#### 监听状态
+#### 监听状态和音频文件
 ```bash
+# 监听服务状态
 rostopic echo /kokoro_tts/status
+
+# 监听生成的音频文件路径
+rostopic echo /kokoro_tts/audio_file
 ```
 
 ## 配置参数
@@ -86,7 +106,7 @@ rostopic echo /kokoro_tts/status
 - `~voice_id` - 语音 ID (默认: 'zf_xiaoyi' 中文女声)
 - `~speed` - 语速 (默认: 1.0)
 - `~sample_rate` - 采样率 (默认: 24000)
-- `~output_dir` - 输出目录 (默认: ~/kokoro_audio)
+- `~output_dir` - 输出目录 (默认: ./audio)
 
 ### 使用自定义参数启动
 ```bash
@@ -100,13 +120,17 @@ rosrun your_package kokoro_tts_service.py _voice_id:=zf_xiaoyi _speed:=1.2 _outp
 
 ### 输出话题
 - `/kokoro_tts/status` (std_msgs/String) - 发布服务状态和结果信息
+- `/kokoro_tts/audio_file` (std_msgs/String) - 发布生成的音频文件路径（客户端自动播放）
 
-## 输出文件
+## 输出文件和音频播放
 
-生成的音频文件保存在指定目录中，文件名格式：
-```
-tts_YYYYMMDD_HHMMSS_<文本hash>.wav
-```
+- 生成的音频文件保存在当前目录的 `audio/` 文件夹中
+- 文件名格式：`tts_YYYYMMDD_HHMMSS_<文本hash>.wav`
+- 客户端会自动播放生成的音频文件（支持 pygame 和系统音频工具）
+- 支持的音频播放方式：
+  - 优先使用 pygame 播放（推荐）
+  - 备选：aplay (ALSA)
+  - 备选：paplay (PulseAudio)
 
 ## 故障排除
 

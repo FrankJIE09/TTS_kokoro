@@ -35,6 +35,20 @@ except ImportError:
     rospy.logerr("错误：无法导入 'numpy'。请确保已安装库： pip install numpy")
     exit(1)
 
+# 音频播放相关导入
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+    rospy.logwarn("警告：pygame 未安装，服务端不会直接播放音频")
+
+try:
+    import subprocess
+    SUBPROCESS_AVAILABLE = True
+except ImportError:
+    SUBPROCESS_AVAILABLE = False
+
 
 class KokoroTTSService:
     def __init__(self):
@@ -46,7 +60,12 @@ class KokoroTTSService:
         self.default_voice_id = rospy.get_param('~voice_id', 'zf_xiaoyi')  # 默认中文女声
         self.default_speed = rospy.get_param('~speed', 1.0)  # 默认语速
         self.sample_rate = rospy.get_param('~sample_rate', 24000)  # 采样率
-        self.output_dir = rospy.get_param('~output_dir', os.path.expanduser('~/kokoro_audio'))  # 输出目录
+        # 修改为使用当前目录下的 audio 文件夹
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        self.output_dir = rospy.get_param('~output_dir', os.path.join(current_dir, 'audio'))  # 输出目录
+        
+        # 是否在服务端直接播放音频
+        self.play_audio_on_server = rospy.get_param('~play_audio_on_server', True)  # 默认启用服务端播放
         
         # 确保输出目录存在
         if not os.path.exists(self.output_dir):
@@ -67,15 +86,25 @@ class KokoroTTSService:
             traceback.print_exc()
             return
         
+        # 初始化音频播放器
+        if self.play_audio_on_server:
+            self.init_audio_player()
+        
         # 创建服务
         # 由于没有自定义服务消息，我们使用主题来模拟服务
         # 实际使用时应该创建正确的服务定义
         self.text_subscriber = rospy.Subscriber('/kokoro_tts/text_input', String, self.text_callback)
         self.status_publisher = rospy.Publisher('/kokoro_tts/status', String, queue_size=10)
+        self.audio_file_publisher = rospy.Publisher('/kokoro_tts/audio_file', String, queue_size=10)
         
         rospy.loginfo("Kokoro TTS 服务已启动，等待文本输入...")
         rospy.loginfo(f"监听话题: /kokoro_tts/text_input")
         rospy.loginfo(f"状态输出话题: /kokoro_tts/status")
+        rospy.loginfo(f"音频文件话题: /kokoro_tts/audio_file")
+        if self.play_audio_on_server:
+            rospy.loginfo("服务端音频播放: 启用")
+        else:
+            rospy.loginfo("服务端音频播放: 禁用（需要客户端播放）")
     
     def text_callback(self, msg):
         """处理文本输入回调"""
@@ -91,6 +120,14 @@ class KokoroTTSService:
         
         if result['success']:
             self.publish_status(f"成功：音频已保存到 {result['audio_file']}")
+            # 发布音频文件路径给客户端播放
+            audio_msg = String()
+            audio_msg.data = result['audio_file']
+            self.audio_file_publisher.publish(audio_msg)
+            
+            # 如果启用了服务端播放，直接播放音频
+            if self.play_audio_on_server:
+                self.play_audio(result['audio_file'])
         else:
             self.publish_status(f"失败：{result['message']}")
     
@@ -162,6 +199,68 @@ class KokoroTTSService:
                 'message': error_msg,
                 'audio_file': ''
             }
+    
+    def init_audio_player(self):
+        """初始化音频播放器"""
+        if PYGAME_AVAILABLE:
+            try:
+                pygame.mixer.init()
+                rospy.loginfo("服务端使用 pygame 播放音频")
+                self.audio_method = 'pygame'
+            except Exception as e:
+                rospy.logwarn(f"pygame 初始化失败: {e}")
+                self.audio_method = 'system'
+        else:
+            self.audio_method = 'system'
+            rospy.loginfo("服务端使用系统命令播放音频")
+    
+    def play_audio(self, audio_file):
+        """在服务端播放音频文件"""
+        if not os.path.exists(audio_file):
+            rospy.logerr(f"音频文件不存在: {audio_file}")
+            return
+        
+        def play_thread():
+            try:
+                if self.audio_method == 'pygame' and PYGAME_AVAILABLE:
+                    # 使用 pygame 播放
+                    pygame.mixer.music.load(audio_file)
+                    pygame.mixer.music.play()
+                    # 等待播放完成
+                    while pygame.mixer.music.get_busy():
+                        pygame.time.wait(100)
+                    rospy.loginfo(f"服务端播放完成: {os.path.basename(audio_file)}")
+                
+                elif SUBPROCESS_AVAILABLE:
+                    # 使用系统命令播放
+                    try:
+                        # 尝试使用 aplay (ALSA)
+                        result = subprocess.run(['aplay', audio_file], 
+                                              capture_output=True, text=True, timeout=30)
+                        if result.returncode == 0:
+                            rospy.loginfo(f"服务端播放完成: {os.path.basename(audio_file)}")
+                        else:
+                            raise Exception("aplay 失败")
+                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                        try:
+                            # 尝试使用 paplay (PulseAudio)
+                            result = subprocess.run(['paplay', audio_file], 
+                                                  capture_output=True, text=True, timeout=30)
+                            if result.returncode == 0:
+                                rospy.loginfo(f"服务端播放完成: {os.path.basename(audio_file)}")
+                            else:
+                                raise Exception("paplay 失败")
+                        except Exception:
+                            rospy.logerr(f"服务端无法播放音频文件: {audio_file}")
+                else:
+                    rospy.logerr("服务端没有可用的音频播放方法")
+                    
+            except Exception as e:
+                rospy.logerr(f"服务端播放音频时出错: {e}")
+        
+        # 在单独线程中播放音频，避免阻塞
+        import threading
+        threading.Thread(target=play_thread, daemon=True).start()
     
     def publish_status(self, message):
         """发布状态消息"""
