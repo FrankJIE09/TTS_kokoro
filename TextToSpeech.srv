@@ -1,0 +1,12 @@
+# TextToSpeech.srv - 文字转语音服务定义
+# 请求部分
+string text          # 输入的中文文本
+string voice_id      # 语音 ID（可选，默认使用 zf_xiaoyi）
+float32 speed        # 语速（可选，默认为 1.0）
+string output_path   # 输出文件路径（可选，如果为空则使用默认路径）
+---
+# 响应部分
+bool success         # 是否成功生成音频
+string message       # 状态消息
+string audio_file    # 生成的音频文件路径
+float32 duration     # 音频时长（秒） 
