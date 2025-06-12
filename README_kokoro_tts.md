@@ -64,6 +64,12 @@ python3 kokoro_tts_client.py "你好世界"
 
 #### 发送文本
 ```bash
+roscore
+```
+```bash
+./launch_kokoro_tts.sh
+```
+```bash
 rostopic pub /kokoro_tts/text_input std_msgs/String "data: '你好，这是测试文本'"
 ```
 
@@ -136,3 +142,4 @@ msg = String()
 msg.data = "欢迎使用 Kokoro TTS 服务"
 pub.publish(msg)
 ``` 
+
