@@ -1,40 +1,131 @@
+# -*- coding: utf-8 -*-
 import os
 import traceback
-import time  # 用于可能的延迟
+import time
 
 try:
-    from kokoro import KPipeline  # 导入 kokoro 库
+    from kokoro import KPipeline
 except ImportError:
     print("错误：无法导入 'kokoro'。")
     print("请确保已安装库： pip install kokoro")
     print("并且可能需要安装: sudo apt install espeak-ng")
     exit()
 try:
-    import soundfile as sf  # 用于保存 WAV 文件
+    import soundfile as sf
 except ImportError:
     print("错误：无法导入 'soundfile'。")
     print("请确保已安装库： pip install soundfile")
     exit()
 try:
-    import numpy as np  # 用于合并音频块
+    import numpy as np
 except ImportError:
     print("错误：无法导入 'numpy'。")
     print("请确保已安装库： pip install numpy")
     exit()
 
-# --- 配置 ---
-OUTPUT_DIR = "audio"  # 输出 WAV 文件的子目录
-LANGUAGE_CODE = "z"  # 指定中文普通话 (根据 kokoro-onnx 文档)
-VOICE_ID = "zf_xiaoyi"  # 你示例中使用的特定中文女声，推荐使用这个
-SPEECH_SPEED = 1  # 语速 (1.0 = 正常)
-SAMPLE_RATE = 24000  # Kokoro 模型通常使用 24kHz 采样率
+# --- 全局配置和初始化 ---
+LANGUAGE_CODE = "z"  # 中文普通话
+SPEECH_SPEED = 1.0
+SAMPLE_RATE = 24000
+pipeline = None
 
-# 需要生成的语音提示及其对应的文本
-# (键名需要与你的 dual_arm_config.yaml 中的 audio_files 部分匹配)
+def initialize_pipeline():
+    """初始化并返回全局的 Kokoro Pipeline 实例。"""
+    global pipeline
+    if pipeline is None:
+        print(f"正在初始化 Kokoro Pipeline (语言: {LANGUAGE_CODE})...")
+        try:
+            pipeline = KPipeline(lang_code=LANGUAGE_CODE)
+            print("Kokoro Pipeline 初始化成功。")
+        except Exception as e:
+            print(f"错误：初始化 Kokoro Pipeline 失败: {e}")
+            traceback.print_exc()
+            raise  # 重新引发异常，以便调用者知道失败了
+    return pipeline
+
+def generate_audio(text: str, voice: str, output_path: str):
+    """
+    使用 Kokoro TTS 生成单个音频文件。
+
+    Args:
+        text (str): 要转换为语音的文本。
+        voice (str): 要使用的声音ID (例如 "zf_xiaoyi")。
+        output_path (str): 保存生成的 .wav 文件的完整路径。
+    """
+    global pipeline
+    try:
+        # 确保 pipeline 已初始化
+        pipeline = initialize_pipeline()
+
+        print(f"  生成音频 -> '{output_path}' (声音: '{voice}', 文本: '{text}')...")
+
+        # 调用 pipeline 获取生成器
+        generator = pipeline(text, voice=voice, speed=SPEECH_SPEED)
+
+        # 收集所有音频块
+        audio_chunks = []
+        for audio_chunk in generator:
+            # 处理不同类型的音频数据
+            if isinstance(audio_chunk, np.ndarray):
+                # 直接是numpy数组
+                audio_data = audio_chunk
+            elif hasattr(audio_chunk, 'audio'):
+                # Kokoro Result对象，提取audio属性
+                audio_data = audio_chunk.audio
+                if not isinstance(audio_data, np.ndarray):
+                    if hasattr(audio_data, 'detach'):
+                        audio_data = audio_data.detach().cpu().numpy()
+                    else:
+                        audio_data = np.array(audio_data)
+            elif hasattr(audio_chunk, 'detach'):
+                # PyTorch张量
+                audio_data = audio_chunk.detach().cpu().numpy()
+            elif hasattr(audio_chunk, 'numpy'):
+                # 可能是TensorFlow张量
+                audio_data = audio_chunk.numpy()
+            else:
+                # 尝试直接转换为numpy数组
+                try:
+                    audio_data = np.array(audio_chunk)
+                except:
+                    raise TypeError(f"未知的音频块类型 {type(audio_chunk)}，无法转换为numpy数组")
+            
+            # 确保是1维数组
+            if audio_data.ndim > 1:
+                audio_data = audio_data.flatten()
+            audio_chunks.append(audio_data)
+
+        if not audio_chunks:
+            raise ValueError("未能生成任何音频数据块。")
+
+        # 合并并保存音频
+        full_audio_data = np.concatenate(audio_chunks)
+        
+        # 确保数据类型正确
+        if full_audio_data.dtype != np.float32:
+            full_audio_data = full_audio_data.astype(np.float32)
+            # 检查并进行归一化（如果需要）
+            min_val, max_val = np.min(full_audio_data), np.max(full_audio_data)
+            if max_val > 1.0 or min_val < -1.0:
+                print(f"    警告: 音频数据范围 [{min_val:.2f}, {max_val:.2f}] 超出 [-1, 1]，进行削波处理。")
+                full_audio_data = np.clip(full_audio_data, -1.0, 1.0)
+
+        sf.write(output_path, full_audio_data, SAMPLE_RATE, format='WAV', subtype='FLOAT')
+        print(f"    成功保存到: {output_path}")
+
+    except Exception as e:
+        print(f"\n    错误：在生成 '{output_path}' 时失败: {e}")
+        traceback.print_exc()
+        raise # 重新引发异常，以便 web server 可以捕获它
+
+# --- 用于批量生成的旧逻辑 ---
+OUTPUT_DIR = "audio"
+VOICE_ID_DEFAULT = "zf_xiaoyi"
 AUDIO_MAPPING = {
     "system_ready": "系统准备就绪",
     "xyz_mode": "位置控制模式",
     "rpy_mode": "姿态控制模式",
+    "reset_mode": "回正模式",
     "vision_enter": "进入视觉模式",
     "vision_exit": "退出视觉模式",
     "left_open": "打开左夹爪",
@@ -42,104 +133,36 @@ AUDIO_MAPPING = {
     "right_open": "打开右夹爪",
     "right_close": "关闭右夹爪",
     "gripper_inactive": "夹爪未激活",
-    "speed_up": "加速",
-    "speed_down": "减速",
-    # "speed_down": "减速",  # 可选
-    # "speed_down": "减速",  # 可选
-
+    "left_reset_success": "左臂回正成功",
+    "left_reset_fail": "左臂回正失败",
+    "right_reset_success": "右臂回正成功",
+    "right_reset_fail": "右臂回正失败",
 }
 
-
-# --- 主程序 ---
 def generate_files():
-    print("--- Kokoro WAV 文件生成器 (使用 KPipeline) ---")
-
-    # 创建输出目录
+    """
+    （旧功能）根据 AUDIO_MAPPING 批量生成预设的音频文件。
+    """
+    print("\n--- Kokoro WAV 文件批量生成器 ---")
     if not os.path.exists(OUTPUT_DIR):
-        try:
-            os.makedirs(OUTPUT_DIR)
-            print(f"已创建输出目录: {OUTPUT_DIR}")
-        except OSError as e:
-            print(f"错误：无法创建输出目录 '{OUTPUT_DIR}': {e}")
-            return
+        os.makedirs(OUTPUT_DIR)
+        print(f"已创建输出目录: {OUTPUT_DIR}")
 
-    # 初始化 Kokoro Pipeline
-    try:
-        print(f"正在初始化 Kokoro Pipeline (语言: {LANGUAGE_CODE})...")
-        # 注意：lang_code 可能在 KPipeline 初始化时指定，或在调用时指定
-        # 参考 kokoro 库的实际用法，这里假设在初始化时指定
-        # 如果初始化时不能指定 lang_code，则需要在 pipeline(...) 调用中指定
-        pipeline = KPipeline(lang_code=LANGUAGE_CODE)
-        print("Kokoro Pipeline 初始化成功。")
-    except Exception as e:
-        print(f"错误：初始化 Kokoro Pipeline 失败: {e}")
-        print("请确保已安装 kokoro 库及其依赖 (可能需要 torch, espeak-ng等)。")
-        traceback.print_exc()
-        return
-
-    # 生成每个音频文件
-    print("\n开始生成音频文件...")
     success_count = 0
     fail_count = 0
     for event_name, text in AUDIO_MAPPING.items():
-        output_path = os.path.join(OUTPUT_DIR, f"{event_name}.wav")
-        print(f"  生成 '{event_name}' -> '{output_path}' (文本: '{text}')...")
-
+        output_filename = f"{event_name}.wav"
+        output_path = os.path.join(OUTPUT_DIR, output_filename)
         try:
-            # 调用 pipeline 获取生成器
-            # 如果初始化时没指定 lang_code，在这里加: lang=LANGUAGE_CODE
-            generator = pipeline(text, voice=VOICE_ID, speed=SPEECH_SPEED)
-
-            # 收集所有音频块
-            audio_chunks = []
-            print("    收集合成块: ", end="")
-            for i, (gs, ps, audio_chunk) in enumerate(generator):
-                # audio_chunk 通常是 numpy array 或 torch tensor
-                # 确保它是 numpy array
-                if not isinstance(audio_chunk, np.ndarray):
-                    if hasattr(audio_chunk, 'numpy'):  # 检查是否是 tensor
-                        audio_chunk = audio_chunk.cpu().numpy()
-                    else:
-                        print(f"\n    错误：未知的音频块类型 {type(audio_chunk)}，跳过 '{event_name}'。")
-                        audio_chunks = None  # 标记失败
-                        break
-                audio_chunks.append(audio_chunk)
-                print(f"{i + 1}", end=" ")  # 打印块编号
-            print(" ...完成")
-
-            if audio_chunks:  # 如果成功收集到块
-                # 合并所有块
-                full_audio_data = np.concatenate(audio_chunks)
-
-                # 保存为 WAV 文件
-                sf.write(output_path, full_audio_data, SAMPLE_RATE)
-                print(f"    成功保存到: {output_path}")
-                success_count += 1
-            else:
-                fail_count += 1
-
-
-        except Exception as e:
-            print(f"\n    错误：生成或保存 '{event_name}' 时失败: {e}")
-            traceback.print_exc()  # 打印详细错误
+            generate_audio(text, VOICE_ID_DEFAULT, output_path)
+            success_count += 1
+        except Exception:
             fail_count += 1
-        # time.sleep(0.5) # 可选：每次生成后停顿一下
-
-    print("\n--- 生成结束 ---")
+    
+    print("\n--- 批量生成结束 ---")
     print(f"成功: {success_count} 个文件")
     print(f"失败: {fail_count} 个文件")
-    print(f"文件已保存在 '{OUTPUT_DIR}' 目录下。")
-    print("请确保 dual_arm_config.yaml 中的 audio_files 路径指向这些生成的文件。")
-
 
 if __name__ == "__main__":
-    # 检查 PyTorch 是否可用 (kokoro 可能需要)
-    try:
-        import torch
-
-        print(f"PyTorch version: {torch.__version__}")
-    except ImportError:
-        print("警告：未找到 PyTorch。kokoro 库可能需要它。")
-        print("可以尝试安装: pip install torch")
-
+    # 当作为主脚本运行时，执行批量生成
     generate_files()

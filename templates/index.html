@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kokoro TTS - 文本转语音</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Kokoro TTS 文本转语音</h1>
+        <p>输入中文文本，选择一个声音模型，即可生成并播放音频。</p>
+        
+        <textarea id="text-input" placeholder="在此输入中文文本..."></textarea>
+        
+        <div class="controls">
+            <select id="voice-select">
+                <option value="">正在加载声音...</option>
+            </select>
+            <button id="generate-btn">生成音频</button>
+        </div>
+        
+        <div id="audio-output" class="hidden">
+            <h2>结果</h2>
+            <audio id="audio-player" controls></audio>
+            <a id="download-link" href="#" download>下载音频</a>
+        </div>
+
+        <div id="loading-spinner" class="hidden">
+            <div class="spinner"></div>
+            <p>正在生成音频，请稍候...</p>
+        </div>
+
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>

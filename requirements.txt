@@ -6,3 +6,6 @@ cn2an
 ordered_set
 jieba
 torch
+fastapi
+uvicorn[standard]
+pydantic
